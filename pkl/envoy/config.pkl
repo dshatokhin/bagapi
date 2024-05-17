@@ -1,0 +1,49 @@
+node {
+  id = "id_0"
+  cluster = "bagapi"
+}
+
+// https://github.com/google/re2/wiki/WhyRE2
+// https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+default_regex_engine {
+  name = "envoy.regex_engines.google_re2"
+  typed_config {
+    `@type` = "type.googleapis.com/envoy.extensions.regex_engines.v3.GoogleRE2"
+  }
+}
+
+// Never expose admin interface publicly
+admin {
+  address {
+    socket_address {
+      address = "0.0.0.0"
+      port_value = 9901
+    }
+  }
+}
+
+dynamic_resources {
+  lds_config {
+    resource_api_version = "V3"
+    path_config_source {
+      path = "/listeners/lds.yaml"
+      watched_directory {
+        path = "/listeners"
+      }
+    }
+  }
+
+  cds_config {
+    resource_api_version = "V3"
+    path_config_source {
+      path = "/xds/cds.yaml"
+      watched_directory {
+        path = "/xds"
+      }
+    }
+  }
+}
+
+output {
+  renderer = new YamlRenderer {}
+}

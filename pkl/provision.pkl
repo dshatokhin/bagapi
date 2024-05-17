@@ -1,0 +1,364 @@
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/K8sResource.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/apps/v1/Deployment.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/Service.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/ConfigMap.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/ServiceAccount.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/rbac/v1/ClusterRoleBinding.pkl"
+import "envoy/config.pkl"
+import "envoy/lds.pkl"
+import "pkl:json"
+
+/*
+Creates:
+- controller deployment
+- controller rbac (serviceaccount, role, rolebinding)
+- envoy daemonset
+- envoy configmap (bootstrapConfig)
+*/
+
+gatewaysProp = read("prop:gateways")
+gatewaysFile = read("file:\(gatewaysProp)")
+gateways = new json.Parser { useMapping = false }
+  .parse(gatewaysFile)
+
+defaultImage = read?("prop:image") ?? "registry.gitlab.com/dshatokhin/bagapi:latest"
+
+defaultLabels: Mapping<String, String> = new {
+  ["app.kubernetes.io/name"] = "bagapi"
+  ["app.kubernetes.io/instance"] = "bagapi"
+  ["app.kubernetes.io/version"] = "0.1.0"
+  ["app.kubernetes.io/managed-by"] = "pkl"
+}
+
+gatewayResources: Listing<K8sResource> = new {
+  for (_gateway in gateways.items) {
+    when (_gateway.spec.gatewayClassName == "bagapi") {
+      new ServiceAccount {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-controller"
+          namespace = _gateway.metadata.namespace
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "controller"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+        automountServiceAccountToken = true
+      }
+
+      new ClusterRoleBinding {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-controller"
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "controller"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+        roleRef {
+          apiGroup = "rbac.authorization.k8s.io"
+          kind = "ClusterRole"
+          name = "bagapi"
+        }
+        subjects {
+          new {
+            kind = "ServiceAccount"
+            name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-controller"
+            namespace = _gateway.metadata.namespace
+          }
+        }
+      }
+
+      new Deployment {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-controller"
+          namespace = _gateway.metadata.namespace
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "controller"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+        spec {
+          selector {
+            matchLabels = (defaultLabels) {
+              ["app.kubernetes.io/component"] = "controller"
+              ["gateway"] = _gateway.metadata.name
+              ["class"] = _gateway.spec.gatewayClassName
+            }
+          }
+          template {
+            metadata {
+              labels = (defaultLabels) {
+                ["app.kubernetes.io/component"] = "controller"
+                ["gateway"] = _gateway.metadata.name
+                ["class"] = _gateway.spec.gatewayClassName
+              }
+            }
+            spec {
+              serviceAccount = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-controller"
+              containers {
+                new {
+                  name = "controller"
+                  image = defaultImage
+                  command = new {
+                    "/bin/sh"
+                    "-ec"
+                  }
+                  args = new {
+                    """
+                    while true; do
+                      echo "==> Updating resources"
+                      kubectl get httproutes --all-namespaces --output=json > /opt/httproutes.json
+                      kubectl get httproutes --all-namespaces
+                      pkl eval /opt/bagapi/serve.pkl \\
+                        -p httpRoutes="/opt/httproutes.json" \\
+                        -p gatewayName="$(BAGAPI_GATEWAY_NAME)" \\
+                        -p gatewayNamespace="$(BAGAPI_GATEWAY_NAMESPACE)" \\
+                        -p envoyConfigmap="$(BAGAPI_ENVOY_CONFIGMAP)" | kubectl apply -f -
+                      echo ""
+                      sleep 30
+                    done
+                    """
+                  }
+                  env {
+                    new {
+                      name = "BAGAPI_ENVOY_CONFIGMAP"
+                      value = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-xds"
+                    }
+                    new {
+                      name = "BAGAPI_GATEWAY_NAME"
+                      value = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)"
+                    }
+                    new {
+                      name = "BAGAPI_GATEWAY_NAMESPACE"
+                      value = _gateway.metadata.namespace
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      new Deployment {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-envoy"
+          namespace = _gateway.metadata.namespace
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "envoy"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+        spec {
+          selector {
+            matchLabels = (defaultLabels) {
+              ["app.kubernetes.io/component"] = "envoy"
+              ["gateway"] = _gateway.metadata.name
+              ["class"] = _gateway.spec.gatewayClassName
+            }
+          }
+          template {
+            metadata {
+              labels = (defaultLabels) {
+                ["app.kubernetes.io/component"] = "envoy"
+                ["gateway"] = _gateway.metadata.name
+                ["class"] = _gateway.spec.gatewayClassName
+              }
+            }
+            spec {
+              securityContext {
+                fsGroupChangePolicy = "Always"
+                fsGroup = 0
+              }
+              initContainers {
+                new {
+                  name = "bootstrap"
+                  image = defaultImage
+                  imagePullPolicy = "Always"
+                  args = new {
+                    "pkl"
+                    "eval"
+                    "/opt/bagapi/init.pkl"
+                    "-m"
+                    "/config"
+                  }
+                  volumeMounts {
+                    new {
+                      name = "config"
+                      mountPath = "/config"
+                    }
+                  }
+                }
+              }
+              containers {
+                new {
+                  name = "envoy"
+                  image = "envoyproxy/envoy:debug-v1.30-latest"
+                  args = new {
+                    "-c"
+                    "/config/envoy.yaml"
+                  }
+                  env {
+                    new {
+                      name = "ENVOY_UID"
+                      value = "0"
+                    }
+                  }
+                  ports {
+                    new {
+                      containerPort = 9901
+                      name = "admin"
+                    }
+                    for (_listener in _gateway.spec.listeners) {
+                      new {
+                        containerPort = _listener.port
+                        name = _listener.name
+                      }
+                    }
+                  }
+                  volumeMounts {
+                    new {
+                      name = "config"
+                      mountPath = "/config"
+                    }
+                    new {
+                      name = "listeners"
+                      mountPath = "/listeners"
+                    }
+                    new {
+                      name = "xds"
+                      mountPath = "/xds"
+                    }
+                  }
+                  securityContext {
+                    allowPrivilegeEscalation = true
+                    capabilities {
+                      add = new {"CAP_NET_BIND_SERVICE"}
+                      drop = new {"ALL"}
+                    }
+                    privileged = true
+                    readOnlyRootFilesystem = true
+                    runAsGroup = 0
+                    runAsNonRoot = false
+                    runAsUser = 0
+                  }
+                }
+              }
+              volumes {
+                new {
+                  name = "config"
+                  emptyDir = new {}
+                }
+                new {
+                  name = "listeners"
+                  configMap {
+                    defaultMode = 493
+                    name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-listeners"
+                    optional = true
+                  }
+                }
+                new {
+                  name = "xds"
+                  configMap {
+                    defaultMode = 493
+                    name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-xds"
+                    optional = true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      new Service {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)"
+          namespace = _gateway.metadata.namespace
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "envoy"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+        spec {
+          type = "LoadBalancer"
+          ports {
+            for (_listener in _gateway.spec.listeners) {
+              new {
+                port = _listener.port
+                name = _listener.name
+              }
+            }
+          }
+          selector = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "envoy"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+      }
+
+      new ConfigMap {
+        metadata {
+          name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)-listeners"
+          namespace = _gateway.metadata.namespace
+          labels = (defaultLabels) {
+            ["app.kubernetes.io/component"] = "envoy"
+            ["gateway"] = _gateway.metadata.name
+            ["class"] = _gateway.spec.gatewayClassName
+          }
+        }
+
+        local envoyLdsFile = (lds) {
+          resources {
+            for (_listener in _gateway.spec.listeners) {
+              new {
+                name = _listener.name
+                address {
+                  socket_address {
+                    port_value = _listener.port
+                  }
+                }
+                filter_chains {
+                  new {
+                    filters {
+                      new {
+                        typed_config {
+                          rds {
+                            route_config_name = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        data {
+          ["lds.yaml"] =
+          """
+          \(envoyLdsFile.output.text)
+          """
+          [gatewaysFile.sha256] = ""
+          // """
+          // \(gatewaysFile.sha256)
+          // """
+        }
+      }
+    }
+  }
+}
+
+output {
+  value = gatewayResources
+  renderer = (K8sResource.output.renderer as YamlRenderer) {
+    isStream = true
+  }
+}

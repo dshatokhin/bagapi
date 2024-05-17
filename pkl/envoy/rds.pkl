@@ -1,0 +1,29 @@
+resources {
+  default {
+    `@type` = "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    name = "default"
+    virtual_hosts {
+      default {
+        name = "service"
+        domains {
+          default {}
+        }
+        routes {
+          default {
+            match {
+              prefix = "/"
+            }
+            route {
+              cluster = "default"
+            }
+          }
+        }
+      }
+    }
+    ignore_port_in_host_matching = true
+  }
+}
+
+output {
+  renderer = new YamlRenderer {}
+}

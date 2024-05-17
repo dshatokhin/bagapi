@@ -1,0 +1,19 @@
+import "envoy/config.pkl"
+import "pkl:yaml"
+
+hostname = read?("env:HOSTNAME") ?? "envoy"
+
+initConfig = (config) {
+  node {
+    id = hostname
+  }
+}
+
+output {
+  files {
+    ["envoy.yaml"] {
+      value = initConfig
+      renderer = new YamlRenderer {}
+    }
+  }
+}

@@ -1,0 +1,189 @@
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/K8sResource.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/apps/v1/Deployment.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/Service.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/ServiceAccount.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/rbac/v1/ClusterRole.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/rbac/v1/ClusterRoleBinding.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/Namespace.pkl"
+import "pkl:yaml"
+
+defaults {
+  namespace = read?("prop:namespace") ?? "bagapi-system"
+  createNamespace = read?("prop:createNamespace") ?? "false"
+
+  image {
+    repository = "registry.gitlab.com/dshatokhin/bagapi"
+    pullPolicy = "Always"
+    tag = "latest"
+  }
+}
+
+defaultLabels: Mapping<String, String> = new {
+  ["app.kubernetes.io/name"] = "bagapi"
+  ["app.kubernetes.io/instance"] = "bagapi"
+  ["app.kubernetes.io/version"] = "0.1.0"
+  ["app.kubernetes.io/component"] = "provisioner"
+  ["app.kubernetes.io/managed-by"] = "pkl"
+}
+
+resources: Listing<K8sResource> = new {
+  when (defaults.createNamespace == "true") {
+    new Namespace {
+      metadata {
+        name= defaults.namespace
+        labels {
+          ["kubernetes.io/metadata.name"] = defaults.namespace
+        }
+      }
+    }
+  }
+
+  new Deployment {
+    metadata {
+      name = "bagapi-provisioner"
+      namespace = defaults.namespace
+      labels = defaultLabels
+    }
+    spec {
+      replicas = 1
+      selector {
+        matchLabels = defaultLabels
+      }
+      template {
+        metadata {
+          labels = defaultLabels
+        }
+        spec {
+          serviceAccount = "bagapi-provisioner"
+          containers {
+            new {
+              name = "kubectl"
+              image = "\(defaults.image.repository):\(defaults.image.tag)"
+              imagePullPolicy = defaults.image.pullPolicy
+              command = new {
+                "/bin/sh"
+                "-ec"
+              }
+              args = new {
+                """
+                while true; do
+                  echo "==> Updating resources"
+                  kubectl get gateway --all-namespaces --output=json > /opt/gateways.json
+                  kubectl get gateway --all-namespaces
+                  pkl eval /opt/bagapi/provision.pkl -p gateways="/opt/gateways.json" -p image="\(defaults.image.repository):\(defaults.image.tag)" | kubectl apply -f - || true
+                  # kubectl patch gateway NAME --namespace=NAMESPACE --type=merge --subresource=status --patch='status:{healthState: InSync}' || true
+                  echo ""
+                  sleep 30
+                done
+                """
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  new ServiceAccount {
+    metadata {
+      name = "bagapi-provisioner"
+      namespace = defaults.namespace
+      labels = defaultLabels
+    }
+    automountServiceAccountToken = true
+  }
+
+  new ClusterRole {
+    metadata {
+      name = "bagapi"
+      labels = defaultLabels
+    }
+    rules {
+      new {
+        apiGroups = new {
+          "gateway.networking.k8s.io"
+        }
+        resources = new {
+          "gatewayclasses"
+          "gateways"
+          "grpcroutes"
+          "httproutes"
+          "tcproutes"
+          "tlsroutes"
+          "udproutes"
+          "referencepolicies"
+          "referencegrants"
+          "backendtlspolicies"
+        }
+        verbs = new {
+          "get"
+          "list"
+          "watch"
+          "update"
+        }
+      }
+      new {
+        apiGroups = new {
+          ""
+        }
+        resources = new {
+          "configmaps"
+          "services"
+          "serviceaccounts"
+        }
+        verbs = new {
+          "*"
+        }
+      }
+      new {
+        apiGroups = new {
+          "apps"
+        }
+        resources = new {
+          "deployments"
+        }
+        verbs = new {
+          "*"
+        }
+      }
+      new {
+        apiGroups = new {
+          "rbac.authorization.k8s.io"
+        }
+        resources = new {
+          "clusterrolebindings"
+        }
+        verbs = new {
+          "*"
+        }
+      }
+    }
+  }
+
+  new ClusterRoleBinding {
+    metadata {
+      name = "bagapi-provisioner"
+      labels = defaultLabels
+    }
+    roleRef {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind = "ClusterRole"
+      name = "bagapi"
+    }
+    subjects {
+      new {
+        kind = "ServiceAccount"
+        name = "bagapi-provisioner"
+        namespace = defaults.namespace
+      }
+    }
+  }
+}
+
+output {
+  value = resources
+  renderer = (K8sResource.output.renderer as YamlRenderer) {
+    isStream = true
+  }
+}
+

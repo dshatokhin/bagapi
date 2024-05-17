@@ -1,0 +1,122 @@
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/K8sResource.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/ConfigMap.pkl"
+import "envoy/cds.pkl"
+import "envoy/rds.pkl"
+import "pkl:json"
+
+/*
+Creates:
+- controller deployment
+- controller rbac (serviceaccount, role, rolebinding)
+- envoy daemonset
+- envoy configmap (bootstrapConfig)
+*/
+
+envoyConfigmap = read?("prop:envoyConfigmap") ?? "envoy-config"
+gatewayName = read?("prop:gatewayName") ?? "default"
+gatewayNamespace = read?("prop:gatewayNamespace") ?? "default"
+
+httpRoutesProp = read("prop:httpRoutes")
+httpRoutesFile = read("file:\(httpRoutesProp)")
+httpRoutes = new json.Parser { useMapping = false }
+  .parse(httpRoutesFile)
+
+defaultLabels: Mapping<String, String> = new {
+  ["app.kubernetes.io/name"] = "bagapi"
+  ["app.kubernetes.io/instance"] = "bagapi"
+  ["app.kubernetes.io/version"] = "0.1.0"
+  ["app.kubernetes.io/managed-by"] = "pkl"
+}
+
+resources: Listing<K8sResource> = new {
+  // for (_httpRoute in httpRoutes.items) {
+    new ConfigMap {
+      metadata {
+        name = envoyConfigmap
+        namespace = gatewayNamespace
+        labels = (defaultLabels) {
+          ["app.kubernetes.io/component"] = "envoy-config"
+        }
+      }
+
+      local envoyRdsFile = (rds) {
+        resources {
+          new {
+            name = gatewayName
+            virtual_hosts {
+              for (_httpRoute in httpRoutes.items) {
+                for (_route in _httpRoute.spec.rules) {
+                  new {
+                    name = _httpRoute.metadata.name
+                    domains = _httpRoute.spec.hostnames
+                    routes {
+                      new {
+                        match {
+                          prefix = _route.matches[0].path.value
+                        }
+                        route {
+                          cluster = "\(_httpRoute.metadata.name)-\(_httpRoute.metadata.namespace)-cluster"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      local envoyCdsFile = (cds) {
+        resources {
+          for (_httpRoute in httpRoutes.items) {
+            for (_route in _httpRoute.spec.rules) {
+              new {
+                name = "\(_httpRoute.metadata.name)-\(_httpRoute.metadata.namespace)-cluster"
+                load_assignment {
+                  cluster_name = "\(_httpRoute.metadata.name)-\(_httpRoute.metadata.namespace)-cluster"
+                  endpoints {
+                    new {
+                      lb_endpoints {
+                        for (_backendRef in _route.backendRefs) {
+                          new {
+                            endpoint {
+                              address {
+                                socket_address {
+                                  address = _backendRef.name
+                                  port_value = _backendRef.port
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      data {
+        ["rds.yaml"] =
+        """
+        \(envoyRdsFile.output.text)
+        """
+        ["cds.yaml"] =
+        """
+        \(envoyCdsFile.output.text)
+        """
+        [httpRoutesFile.sha256] = ""
+      }
+    }
+}
+
+output {
+  value = resources
+  renderer = (K8sResource.output.renderer as YamlRenderer) {
+    isStream = true
+  }
+}

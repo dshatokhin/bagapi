@@ -1,0 +1,5 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate*
+bagapi-cluster.yaml
+pkl/debug.sh

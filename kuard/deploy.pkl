@@ -1,0 +1,210 @@
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/K8sResource.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/apps/v1/Deployment.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/Service.pkl"
+import "package://pkg.pkl-lang.org/pkl-k8s/k8s@1.1.0#/api/core/v1/Namespace.pkl"
+import "gapi/GatewayClass.pkl"
+import "gapi/Gateway.pkl"
+import "gapi/HTTPRoute.pkl"
+
+defaults {
+  namespace = "kuard"
+  createNamespace = false
+  enableHttps = false
+  kuardPort = 8080
+
+  image {
+    repository = "gcr.io/kuar-demo/kuard"
+    arch = "amd64"
+    pullPolicy = "IfNotPresent"
+  }
+
+  colours = new {
+    "blue"
+    "green"
+    "purple"
+  }
+}
+
+targetNamespace = read?("prop:namespace") ?? defaults.namespace
+createNamespace = read?("prop:createNamespace")?.toBoolean() ?? defaults.createNamespace
+enableHttps = read?("prop:enableHttps")?.toBoolean() ?? defaults.enableHttps
+colours = read?("prop:colours")?.split(",") ?? defaults.colours
+
+defaultLabels: Mapping<String, String> = new {
+  ["app.kubernetes.io/name"] = "kuard"
+  ["app.kubernetes.io/instance"] = "kuard"
+  ["app.kubernetes.io/version"] = "0.10.0"
+  ["app.kubernetes.io/component"] = "kuard"
+  ["app.kubernetes.io/managed-by"] = "pkl"
+}
+
+resources: Listing<K8sResource> = new {
+  when (createNamespace) {
+    new Namespace {
+      metadata {
+        name = targetNamespace
+        labels {
+          ["kubernetes.io/metadata.name"] = targetNamespace
+        }
+      }
+    }
+  }
+
+  new GatewayClass {
+    metadata {
+      name = "bagapi"
+      labels = defaultLabels
+    }
+    spec {
+      controllerName = "bagapi.org/gateway-controller"
+    }
+  }
+
+  new Gateway {
+    metadata {
+      name = "kuard"
+      namespace = targetNamespace
+      labels = defaultLabels
+    }
+    spec {
+      gatewayClassName = "bagapi"
+      listeners {
+        when (enableHttps) {
+          new {
+            protocol = "HTTP"
+            port = 443
+            name = "https"
+            allowedRoutes {
+              namespaces {
+                from = "All"
+              }
+            }
+          }
+        }
+        new {
+          protocol = "HTTP"
+          port = 80
+          name = "http"
+          allowedRoutes {
+            namespaces {
+              from = "All"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (_colour in colours) {
+    new Deployment {
+      metadata {
+        name = "kuard-\(_colour)"
+        namespace = targetNamespace
+        labels = (defaultLabels) {
+          ["kuard-colour"] = _colour
+        }
+      }
+      spec {
+        replicas = 1
+        selector {
+          matchLabels = (defaultLabels) {
+            ["kuard-colour"] = _colour
+          }
+        }
+        template {
+          metadata {
+            labels = (defaultLabels) {
+              ["kuard-colour"] = _colour
+            }
+          }
+          spec {
+            containers {
+              new {
+                name = "kuard"
+                image = "\(defaults.image.repository)-\(defaults.image.arch):\(_colour)"
+                imagePullPolicy = defaults.image.pullPolicy
+                ports {
+                  new {
+                    containerPort = defaults.kuardPort
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    new Service {
+      metadata {
+        name = "kuard-\(_colour)"
+        namespace = targetNamespace
+        labels = (defaultLabels) {
+          ["kuard-colour"] = _colour
+        }
+      }
+      spec {
+        type = "ClusterIP"
+        ports {
+          new {
+            port = defaults.kuardPort
+            name = "http"
+          }
+        }
+        selector = (defaultLabels) {
+          ["kuard-colour"] = _colour
+        }
+      }
+    }
+
+    new HTTPRoute {
+      metadata {
+        name = "kuard-\(_colour)"
+        namespace = targetNamespace
+        labels = (defaultLabels) {
+          ["kuard-colour"] = _colour
+        }
+      }
+      spec {
+        parentRefs {
+          new {
+            name = "kuard"
+            kind = "Gateway"
+            group = "gateway.networking.k8s.io"
+          }
+        }
+        hostnames = new {
+          "\(_colour).online"
+        }
+        rules {
+          new {
+            backendRefs {
+              new {
+                name = "kuard-\(_colour)"
+                port = defaults.kuardPort
+                kind = "Service"
+                weight = 1
+                group = ""
+              }
+            }
+            matches {
+              new {
+                path {
+                  type = "PathPrefix"
+                  value = "/"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+output {
+  value = resources
+  renderer = (K8sResource.output.renderer as YamlRenderer) {
+    isStream = true
+  }
+}

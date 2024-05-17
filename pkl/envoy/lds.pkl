@@ -1,0 +1,58 @@
+resources {
+  default {
+    name = "listener_0"
+   `@type` = "type.googleapis.com/envoy.config.listener.v3.Listener"
+    address {
+      socket_address {
+        address = "0.0.0.0"
+        port_value = 10000
+      }
+    }
+    filter_chains {
+      default {
+        filters {
+          default {
+            name = "envoy.filters.network.http_connection_manager"
+            typed_config {
+              `@type` = "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+              stat_prefix = "ingress"
+              rds {
+                route_config_name = "default"
+                config_source {
+                  resource_api_version = "V3"
+                  path_config_source {
+                    path = "/xds/rds.yaml"
+                    watched_directory {
+                      path = "/xds"
+                    }
+                  }
+                }
+              }
+              http_filters {
+                new {
+                  name = "envoy.filters.http.router"
+                  typed_config {
+                    `@type` = "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                  }
+                }
+              }
+              access_log {
+                new {
+                  name = "envoy.access_loggers.file"
+                  typed_config {
+                    `@type` = "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog"
+                    path = "/dev/stdout"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+output {
+  renderer = new YamlRenderer {}
+}

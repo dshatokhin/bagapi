@@ -1,0 +1,30 @@
+resources {
+  default {
+    name = "cluster_0"
+    `@type` = "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    type = "STRICT_DNS"
+    load_assignment {
+      cluster_name = "cluster_0"
+      endpoints {
+        default {
+          lb_endpoints {
+            default {
+              endpoint {
+                address {
+                  socket_address {
+                    address = "service"
+                    port_value = 8080
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+output {
+  renderer = new YamlRenderer {}
+}
