@@ -12,7 +12,7 @@ defaults {
   createNamespace = read?("prop:createNamespace") ?? "false"
 
   image {
-    repository = "registry.gitlab.com/dshatokhin/bagapi"
+    repository = "ghcr.io/dshatokhin/bagapi"
     pullPolicy = "Always"
     tag = "latest"
   }
@@ -70,8 +70,9 @@ resources: Listing<K8sResource> = new {
                   echo "==> Updating resources"
                   kubectl get gateway --all-namespaces --output=json > /opt/gateways.json
                   kubectl get gateway --all-namespaces
+
                   pkl eval /opt/bagapi/provision.pkl -p gateways="/opt/gateways.json" -p image="\(defaults.image.repository):\(defaults.image.tag)" | kubectl apply -f - || true
-                  # kubectl patch gateway NAME --namespace=NAMESPACE --type=merge --subresource=status --patch='status:{healthState: InSync}' || true
+
                   echo ""
                   sleep 30
                 done
@@ -106,6 +107,7 @@ resources: Listing<K8sResource> = new {
         resources = new {
           "gatewayclasses"
           "gateways"
+          "gateways/status"
           "grpcroutes"
           "httproutes"
           "tcproutes"
@@ -119,6 +121,7 @@ resources: Listing<K8sResource> = new {
           "get"
           "list"
           "watch"
+          "patch"
           "update"
         }
       }

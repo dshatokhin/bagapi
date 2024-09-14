@@ -1,15 +1,5 @@
 # Bagapi
 
-## Presentation
-
-Slides could be opened with [maaslalani/slides](https://github.com/maaslalani/slides):
-
-```shell
-> slides slides.md
-```
-
-Or file [slides.md](./slides.md) could be opened directly.
-
 ## Container image
 
 Stored in Gitlab Registry with a public access (`latest` tag only):
@@ -31,6 +21,8 @@ Requirements:
 First, deploy the Kubernetes cluster (UpCloud in our case - authentication needed via env vars - `UPCLOUD_USERNAME` and `UPCLOUD_PASSWORD`):
 
 ```shell
+> pkl eval tofu/main.pkl -m tofu/
+> tofu -chdir=tofu init
 > tofu -chdir=tofu apply -auto-approve
 Apply complete! Resources: 3 added, 0 changed, 0 destroyed.
 ```
@@ -54,7 +46,7 @@ customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.
 Install `bagapi-provisioner` by running:
 
 ```shell
-> kubectl apply -f - <<< `pkl eval bagapi/deploy.pkl -p createNamespace=true`
+> pkl eval bagapi/deploy.pkl -p createNamespace=true | kubectl apply -f -
 namespace/bagapi-system created
 deployment.apps/bagapi-provisioner created
 serviceaccount/bagapi-provisioner created
@@ -65,7 +57,7 @@ clusterrolebinding.rbac.authorization.k8s.io/bagapi-provisioner created
 Deploy `kuard` to cluster, lets start with one instance - `blue`:
 
 ```shell
-> kubectl apply -f - <<< `pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue`
+> pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue | kubectl apply -f -
 namespace/kuard created
 gatewayclass.gateway.networking.k8s.io/bagapi created
 gateway.gateway.networking.k8s.io/kuard created
@@ -108,7 +100,7 @@ ok
 Add other variants of `kuard`:
 
 ```shell
-> kubectl apply -f - <<< `pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue,green,purple`
+> pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue,green,purple | kubectl apply -f -
 namespace/kuard unchanged
 gatewayclass.gateway.networking.k8s.io/bagapi unchanged
 gateway.gateway.networking.k8s.io/kuard unchanged
@@ -132,7 +124,7 @@ Now all 3 instances can be accessed by dicrect links:
 Let's enable HTTPS:
 
 ```shell
-> kubectl apply -f - <<< `pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue,green,purple -p enableHttps=true`
+> pkl eval kuard/deploy.pkl -p createNamespace=true -p colours=blue,green,purple -p enableHttps=true | kubectl apply -f -
 namespace/kuard unchanged
 gatewayclass.gateway.networking.k8s.io/bagapi unchanged
 gateway.gateway.networking.k8s.io/kuard configured
@@ -164,7 +156,7 @@ ok
 To avoid creating any orphaned resources in the cloud first delete workload from cluster:
 
 ```shell
-> kubectl delete -f - <<< `pkl eval kuard/deploy.pkl -p createNamespace=true`
+> pkl eval kuard/deploy.pkl -p createNamespace=true | kubectl delete -f -
 ```
 
 After that the cluster could be destroyed with `tofu`:

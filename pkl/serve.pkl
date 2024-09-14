@@ -4,16 +4,8 @@ import "envoy/cds.pkl"
 import "envoy/rds.pkl"
 import "pkl:json"
 
-/*
-Creates:
-- controller deployment
-- controller rbac (serviceaccount, role, rolebinding)
-- envoy daemonset
-- envoy configmap (bootstrapConfig)
-*/
-
 envoyConfigmap = read?("prop:envoyConfigmap") ?? "envoy-config"
-gatewayName = read?("prop:gatewayName") ?? "default"
+gatewayId = read?("prop:gatewayId") ?? "default"
 gatewayNamespace = read?("prop:gatewayNamespace") ?? "default"
 
 httpRoutesProp = read("prop:httpRoutes")
@@ -42,7 +34,7 @@ resources: Listing<K8sResource> = new {
       local envoyRdsFile = (rds) {
         resources {
           new {
-            name = gatewayName
+            name = gatewayId
             virtual_hosts {
               for (_httpRoute in httpRoutes.items) {
                 for (_route in _httpRoute.spec.rules) {
