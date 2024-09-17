@@ -1,5 +1,6 @@
 .terraform/
 .terraform.lock.hcl
 *.tfstate*
-bagapi-cluster.yaml
+demo-cluster.yaml
 pkl/debug.sh
+*.tf.json

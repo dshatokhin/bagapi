@@ -1,8 +1,8 @@
-FROM mcr.microsoft.com/cbl-mariner/base/core:2.0
+FROM mcr.microsoft.com/azurelinux/base/core:3.0
 
-ARG PKL_VERSION="0.25.3"
+ARG PKL_VERSION="0.26.1"
 ARG PKL_ARCH="amd64"
-ARG KUBECTL_VERSION="1.28.10"
+ARG KUBECTL_VERSION="1.29.1"
 ARG KUBECTL_ARCH="amd64"
 
 RUN tdnf install -y ca-certificates \

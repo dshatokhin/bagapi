@@ -8,14 +8,6 @@ import "envoy/config.pkl"
 import "envoy/lds.pkl"
 import "pkl:json"
 
-/*
-Creates:
-- controller deployment
-- controller rbac (serviceaccount, role, rolebinding)
-- envoy daemonset
-- envoy configmap (bootstrapConfig)
-*/
-
 gatewaysProp = read("prop:gateways")
 gatewaysFile = read("file:\(gatewaysProp)")
 gateways = new json.Parser { useMapping = false }
@@ -111,11 +103,23 @@ gatewayResources: Listing<K8sResource> = new {
                       echo "==> Updating resources"
                       kubectl get httproutes --all-namespaces --output=json > /opt/httproutes.json
                       kubectl get httproutes --all-namespaces
+
                       pkl eval /opt/bagapi/serve.pkl \\
                         -p httpRoutes="/opt/httproutes.json" \\
-                        -p gatewayName="$(BAGAPI_GATEWAY_NAME)" \\
-                        -p gatewayNamespace="$(BAGAPI_GATEWAY_NAMESPACE)" \\
-                        -p envoyConfigmap="$(BAGAPI_ENVOY_CONFIGMAP)" | kubectl apply -f -
+                        -p gatewayId="${BAGAPI_GATEWAY_NAME}-${BAGAPI_GATEWAY_CLASS}" \\
+                        -p gatewayNamespace="${BAGAPI_GATEWAY_NAMESPACE}" \\
+                        -p envoyConfigmap="${BAGAPI_ENVOY_CONFIGMAP}" | kubectl apply -f - || true
+
+                      LB_HOSTNAME=$(kubectl get service "${BAGAPI_GATEWAY_NAME}-${BAGAPI_GATEWAY_CLASS}" \\
+                        --namespace=${BAGAPI_GATEWAY_NAMESPACE} \\
+                        --output=jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+                      [[ -n "$LB_HOSTNAME" ]] && kubectl patch gateway "${BAGAPI_GATEWAY_NAME}" \\
+                        --namespace="${BAGAPI_GATEWAY_NAMESPACE}" \\
+                        --type=merge \\
+                        --subresource=status \\
+                        --patch="{\\"status\\":{\\"addresses\\":[{\\"type\\":\\"Hostname\\",\\"value\\":\\"$LB_HOSTNAME\\"}]}}" || true
+
                       echo ""
                       sleep 30
                     done
@@ -128,7 +132,11 @@ gatewayResources: Listing<K8sResource> = new {
                     }
                     new {
                       name = "BAGAPI_GATEWAY_NAME"
-                      value = "\(_gateway.metadata.name)-\(_gateway.spec.gatewayClassName)"
+                      value = _gateway.metadata.name
+                    }
+                    new {
+                      name = "BAGAPI_GATEWAY_CLASS"
+                      value = _gateway.spec.gatewayClassName
                     }
                     new {
                       name = "BAGAPI_GATEWAY_NAMESPACE"
@@ -347,9 +355,6 @@ gatewayResources: Listing<K8sResource> = new {
           \(envoyLdsFile.output.text)
           """
           [gatewaysFile.sha256] = ""
-          // """
-          // \(gatewaysFile.sha256)
-          // """
         }
       }
     }
