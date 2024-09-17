@@ -13,7 +13,7 @@ gatewaysFile = read("file:\(gatewaysProp)")
 gateways = new json.Parser { useMapping = false }
   .parse(gatewaysFile)
 
-defaultImage = read?("prop:image") ?? "registry.gitlab.com/dshatokhin/bagapi:latest"
+defaultImage = read?("prop:image") ?? "ghcr.io/dshatokhin/bagapi:latest"
 
 defaultLabels: Mapping<String, String> = new {
   ["app.kubernetes.io/name"] = "bagapi"
