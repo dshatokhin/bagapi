@@ -5,7 +5,7 @@
 Stored in Gitlab Registry with a public access (`latest` tag only):
 
 ```plain
-registry.gitlab.com/dshatokhin/bagapi:latest
+ghcr.io/dshatokhin/bagapi:latest
 ```
 
 ## Quick start
@@ -70,7 +70,7 @@ After a few minutes the LoadBalancer will be created in the cloud, use the IP ad
 We've got an FQDN so additional steps needed to resolve the hostname to the IP:
 
 ```shell
-# Get and resolve to IP
+# Get and resolve LB hostname to IP address
 > LB_HOSTNAME=$(kubectl get svc kuard-bagapi -n kuard -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 > LB_ADDRESS=$(dig +short "$LB_HOSTNAME")
 
